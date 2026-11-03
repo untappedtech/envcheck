@@ -79,9 +79,9 @@ $ErrorActionPreference = 'Stop'
 # ============================================================================
 
 $EmbeddedConfig = @{
-    Name = 'PIP Development Environment'
+    Name         = 'PIP Development Environment'
 
-    Software = @(
+    Software     = @(
         # --------------------------------------------------------------------
         # WAMP prerequisites
         # --------------------------------------------------------------------
@@ -152,6 +152,15 @@ $EmbeddedConfig = @{
         # --------------------------------------------------------------------
 
         @{
+            Name             = 'WSL 2'
+            Command          = 'wsl'
+            VersionArguments = @('--status')
+            VersionPattern   = 'Default Version:\s*(?<version>\d+)'
+            Version          = '2'
+            Required         = $true
+        },
+
+        @{
             Name     = 'Docker'
             Command  = 'docker'
             Required = $true
@@ -174,12 +183,20 @@ $EmbeddedConfig = @{
             Source   = 'winget'
         },
 
+        # @{
+        #     Name     = 'PHP'
+        #     Command  = 'php'
+        #     Version  = '8.2.35'
+        #     Required = $true
+        # },
+
         @{
-            Name     = 'PHP'
-            Command  = 'php'
-            Version  = '8.2.35'
-            Required = $true
+            Name     = 'jq'
+            Command  = 'jq'
+            Required = $false
+            WingetId = 'jqlang.jq'
         },
+
 
 
         # --------------------------------------------------------------------
@@ -188,7 +205,7 @@ $EmbeddedConfig = @{
 
         @{
             Name          = 'MySQL'
-            Service       = 'MySQL64'
+            Service       = 'wampmysqld64'
             Version       = '8.4.x'
             Required      = $true
             MustBeRunning = $true
@@ -205,7 +222,7 @@ $EmbeddedConfig = @{
     # never displays the value itself.
     # ------------------------------------------------------------------------
 
-    Environment = @(
+    Environment  = @(
         # Enable these once we know exactly which variables the development
         # environment requires.
         #
@@ -236,7 +253,7 @@ $EmbeddedConfig = @{
     # envcheck is executed.
     # ------------------------------------------------------------------------
 
-    Files = @(
+    Files        = @(
         # I would leave these disabled until we're running envcheck from the
         # actual application repository. Otherwise they describe assumptions
         # we're not ready to make.
@@ -556,26 +573,35 @@ function Get-NormalizedVersion {
 
 .DESCRIPTION
     Runs the supplied executable using its configured version arguments,
-    defaulting to --version, and passes the resulting output through
-    Get-NormalizedVersion.
+    defaulting to --version.
 
-    Returns a structured result containing the detected version, original
-    command output, and success state.
+    When VersionPattern is supplied, the pattern is used to extract the
+    version from command output. The pattern must contain a named capture
+    group named "version".
+
+    When VersionPattern is omitted, the output is passed through the standard
+    Get-NormalizedVersion parser.
 #>
 function Get-InstalledVersion {
-
     param(
         [Parameter(Mandatory)]
         [string]$Command,
 
-        [object[]]$Arguments = @('--version')
+        [object[]]$Arguments = @('--version'),
+
+        [string]$VersionPattern = ''
     )
 
     try {
         $output = (
             & $Command @Arguments 2>&1 |
-            Out-String
+                Out-String
         ).Trim()
+
+        # Some native Windows commands, including wsl.exe, may emit UTF-16-style
+        # output containing embedded NUL characters when their output is captured.
+        # Remove those characters before attempting version extraction.
+        $output = $output.Replace("`0", '')
 
         if ($LASTEXITCODE -ne 0) {
             return [pscustomobject]@{
@@ -585,9 +611,32 @@ function Get-InstalledVersion {
             }
         }
 
-        $version = Get-NormalizedVersion -Text $output
+        if (
+            $null -ne $VersionPattern -and
+            $VersionPattern.Length -gt 0
+        ) {
+            $match = [regex]::Match(
+                $output,
+                $VersionPattern,
+                [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+            )
 
-        if ($null -eq $version) {
+            if (
+                $match.Success -and
+                $match.Groups['version'].Success
+            ) {
+                $version = $match.Groups['version'].Value
+            }
+            else {
+                $version = $null
+            }
+        }
+        else {
+            $version = Get-NormalizedVersion `
+                -Text $output
+        }
+
+        if ($null -eq $version -or $version.Length -eq 0) {
             return [pscustomobject]@{
                 Success = $false
                 Version = $null
@@ -832,7 +881,7 @@ function Resolve-SoftwareExecutable {
         $serviceName.Length -gt 0
     )
     $detection = Get-SoftwareDetectionStrategy `
-    -Software $Software
+        -Software $Software
 
     if (-not $detection.Success) {
         return [pscustomobject]@{
@@ -858,23 +907,23 @@ function Resolve-SoftwareExecutable {
 
     if ($hasCommand -and $hasService) {
         return [pscustomobject]@{
-            Success      = $false
-            Executable   = ''
-            Strategy     = ''
-            Service      = $null
-            FailureKind  = 'Configuration'
-            Message      = 'Specify either Command or Service, not both.'
+            Success     = $false
+            Executable  = ''
+            Strategy    = ''
+            Service     = $null
+            FailureKind = 'Configuration'
+            Message     = 'Specify either Command or Service, not both.'
         }
     }
 
     if (-not $hasCommand -and -not $hasService) {
         return [pscustomobject]@{
-            Success      = $false
-            Executable   = ''
-            Strategy     = ''
-            Service      = $null
-            FailureKind  = 'Configuration'
-            Message      = 'Specify either Command or Service.'
+            Success     = $false
+            Executable  = ''
+            Strategy    = ''
+            Service     = $null
+            FailureKind = 'Configuration'
+            Message     = 'Specify either Command or Service.'
         }
     }
 
@@ -885,12 +934,12 @@ function Resolve-SoftwareExecutable {
 
         if ($null -eq $resolvedCommand) {
             return [pscustomobject]@{
-                Success      = $false
-                Executable   = ''
-                Strategy     = 'Command'
-                Service      = $null
-                FailureKind  = 'Missing'
-                Message      = "Command '$commandName' was not found."
+                Success     = $false
+                Executable  = ''
+                Strategy    = 'Command'
+                Service     = $null
+                FailureKind = 'Missing'
+                Message     = "Command '$commandName' was not found."
             }
         }
 
@@ -905,12 +954,12 @@ function Resolve-SoftwareExecutable {
         }
 
         return [pscustomobject]@{
-            Success      = $true
-            Executable   = $executable
-            Strategy     = 'Command'
-            Service      = $null
-            FailureKind  = ''
-            Message      = ''
+            Success     = $true
+            Executable  = $executable
+            Strategy    = 'Command'
+            Service     = $null
+            FailureKind = ''
+            Message     = ''
         }
     }
 
@@ -926,22 +975,22 @@ function Resolve-SoftwareExecutable {
         }
 
         return [pscustomobject]@{
-            Success      = $false
-            Executable   = $serviceResult.Executable
-            Strategy     = 'Service'
-            Service      = $serviceResult.Service
-            FailureKind  = $failureKind
-            Message      = $serviceResult.Message
+            Success     = $false
+            Executable  = $serviceResult.Executable
+            Strategy    = 'Service'
+            Service     = $serviceResult.Service
+            FailureKind = $failureKind
+            Message     = $serviceResult.Message
         }
     }
 
     return [pscustomobject]@{
-        Success      = $true
-        Executable   = $serviceResult.Executable
-        Strategy     = 'Service'
-        Service      = $serviceResult.Service
-        FailureKind  = ''
-        Message      = ''
+        Success     = $true
+        Executable  = $serviceResult.Executable
+        Strategy    = 'Service'
+        Service     = $serviceResult.Service
+        FailureKind = ''
+        Message     = ''
     }
 }
 
@@ -1159,10 +1208,7 @@ function Get-InstalledWingetPackage {
         )
     }
 
-    $output = (
-        & $winget.Source @arguments 2>&1 |
-            Out-String
-    ).Trim()
+    $output = ( & $winget.Source @arguments 2>&1 | Out-String ).Trim()
 
     $exitCode = $LASTEXITCODE
 
@@ -1467,6 +1513,11 @@ function Test-SoftwareRequirements {
                 -Default @('--version')
         )
 
+        $versionPattern = Get-ConfigValue `
+            -Object $item `
+            -Name 'VersionPattern' `
+            -Default ''
+
         $required = Get-ConfigValue `
             -Object $item `
             -Name 'Required' `
@@ -1530,7 +1581,217 @@ function Test-SoftwareRequirements {
 
         if (-not $discovery.Success) {
 
-            # -------------------
+            # ----------------------------------------------------------------
+            # Detect an inconsistent Command/Winget installation state.
+            #
+            # Example:
+            #
+            #   Get-Command node
+            #       -> missing
+            #
+            #   winget list --id OpenJS.NodeJS.18
+            #       -> installed
+            #
+            # In this state, the executable cannot be used even though
+            # Winget considers its package installed. Treat this as a broken
+            # installation instead of attempting normal bootstrap remediation.
+            # ----------------------------------------------------------------
+
+            $hasWingetRemediation = (
+                $detection.Strategy -eq 'Command' -and
+                $null -ne $wingetId -and
+                $wingetId.Length -gt 0
+            )
+
+            if (
+                $discovery.FailureKind -eq 'Missing' -and
+                $hasWingetRemediation
+            ) {
+                $wingetPackage = Get-InstalledWingetPackage `
+                    -PackageId $wingetId `
+                    -Source $wingetSource
+
+                if (
+                    $wingetPackage.Success -and
+                    $wingetPackage.Installed
+                ) {
+                    $installedVersion = if (
+                        $null -ne $wingetPackage.Version -and
+                        $wingetPackage.Version.Length -gt 0
+                    ) {
+                        $wingetPackage.Version
+                    }
+                    else {
+                        'unknown version'
+                    }
+
+                    $message = (
+                        "{0} Winget reports package '{1}' version {2} " +
+                        'as installed, but its command cannot be found. ' +
+                        'The installation appears incomplete or damaged; ' +
+                        'automatic bootstrap has been disabled.'
+                    ) -f
+                    $discovery.Message,
+                    $wingetId,
+                    $installedVersion
+
+                    Add-CheckResult `
+                        -Status $failureStatus `
+                        -Category 'Software' `
+                        -Name $name `
+                        -Message $message `
+                        -Required $required `
+                        -WingetId '' `
+                        -WingetSource $wingetSource `
+                        -ExpectedVersion $expectedVersion `
+                        -FailureKind 'BrokenInstallation'
+
+                    continue
+                }
+            }
+
+            # ----------------------------------------------------------------
+            # Normal missing-software failure.
+            #
+            # Retain WingetId so genuinely missing software remains eligible
+            # for remediation through -Bootstrap.
+            # ----------------------------------------------------------------
+
+            Add-CheckResult `
+                -Status $failureStatus `
+                -Category 'Software' `
+                -Name $name `
+                -Message $discovery.Message `
+                -Required $required `
+                -WingetId $wingetId `
+                -WingetSource $wingetSource `
+                -ExpectedVersion $expectedVersion `
+                -FailureKind $discovery.FailureKind
+
+            continue
+        }
+
+        # --------------------------------------------------------------------
+        # Determine the installed version
+        # --------------------------------------------------------------------
+
+        $versionResult = Get-InstalledVersion `
+            -Command $discovery.Executable `
+            -Arguments $versionArguments `
+            -VersionPattern $versionPattern
+
+        if (-not $versionResult.Success) {
+            Add-CheckResult `
+                -Status $failureStatus `
+                -Category 'Software' `
+                -Name $name `
+                -Message "Found, but version could not be detected: $($versionResult.Output)" `
+                -Required $required `
+                -WingetId $wingetId `
+                -WingetSource $wingetSource `
+                -ExpectedVersion $expectedVersion `
+                -FailureKind 'VersionDetection'
+
+            continue
+        }
+
+        # --------------------------------------------------------------------
+        # Compare the installed version against the configured requirement
+        #
+        # Version constraints may be exact:
+        #
+        #   18.20.8
+        #
+        # or use trailing wildcards:
+        #
+        #   18.x
+        #   8.4.x
+        # --------------------------------------------------------------------
+
+        $hasExpectedVersion = (
+            $null -ne $expectedVersion -and
+            $expectedVersion.Length -gt 0
+        )
+
+        if ($hasExpectedVersion) {
+            $versionMatches = Test-VersionMatch `
+                -Actual $versionResult.Version `
+                -Expected $expectedVersion
+
+            if (-not $versionMatches) {
+                Add-CheckResult `
+                    -Status $failureStatus `
+                    -Category 'Software' `
+                    -Name $name `
+                    -Message "Expected $expectedVersion; found $($versionResult.Version)." `
+                    -Required $required `
+                    -WingetId $wingetId `
+                    -WingetSource $wingetSource `
+                    -ExpectedVersion $expectedVersion `
+                    -FailureKind 'VersionMismatch'
+
+                continue
+            }
+        }
+
+        # --------------------------------------------------------------------
+        # Check runtime state for service-backed software
+        # --------------------------------------------------------------------
+
+        $serviceState = Test-RequiredServiceState `
+            -Software $item `
+            -DiscoveryResult $discovery
+
+        if (-not $serviceState.Success) {
+            $message = (
+                'Version {0} detected, but {1}' -f
+                $versionResult.Version,
+                $serviceState.Message
+            )
+
+            Add-CheckResult `
+                -Status $failureStatus `
+                -Category 'Software' `
+                -Name $name `
+                -Message $message `
+                -Required $required `
+                -WingetId $wingetId `
+                -WingetSource $wingetSource `
+                -ExpectedVersion $expectedVersion `
+                -FailureKind 'ServiceState'
+
+            continue
+        }
+
+        # --------------------------------------------------------------------
+        # Requirement satisfied
+        # --------------------------------------------------------------------
+
+        if ($hasExpectedVersion) {
+            $message = "$($versionResult.Version) (expected $expectedVersion)"
+        }
+        else {
+            $message = $versionResult.Version
+        }
+
+        if (
+            $serviceState.Applicable -and
+            $serviceState.Message.Length -gt 0
+        ) {
+            $message += "; $($serviceState.Message)"
+        }
+
+        Add-CheckResult `
+            -Status 'PASS' `
+            -Category 'Software' `
+            -Name $name `
+            -Message $message `
+            -Required $required `
+            -WingetId $wingetId `
+            -WingetSource $wingetSource `
+            -ExpectedVersion $expectedVersion
+    }
+}
 
 # ============================================================================
 # Environment-variable checks
