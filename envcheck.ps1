@@ -170,7 +170,8 @@ $EmbeddedConfig = @{
             Command  = 'node'
             Version  = '18.20.8'
             Required = $true
-            WingetId = 'OpenJS.NodeJS.LTS'
+            WingetId = 'OpenJS.NodeJS.18'
+            Source   = 'winget'
         },
 
         @{
@@ -187,7 +188,7 @@ $EmbeddedConfig = @{
 
         @{
             Name          = 'MySQL'
-            Service       = 'MySQL'
+            Service       = 'MySQL64'
             Version       = '8.4.x'
             Required      = $true
             MustBeRunning = $true
@@ -668,6 +669,128 @@ function Test-VersionMatch {
 # ============================================================================
 # Software discovery
 # ============================================================================
+
+<#
+.SYNOPSIS
+    Resolves the executable backing a Windows service.
+
+.DESCRIPTION
+    Locates the requested Windows service and extracts its executable path
+    from BinaryPathName.
+
+    Falls back to Win32_Service through CIM when BinaryPathName is not exposed
+    by Get-Service.
+
+    Handles both quoted and unquoted executable paths and verifies that the
+    resolved executable exists on disk.
+#>
+function Get-ServiceExecutablePath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$ServiceName
+    )
+
+    $service = Get-Service `
+        -Name $ServiceName `
+        -ErrorAction SilentlyContinue
+
+    if ($null -eq $service) {
+        return [pscustomobject]@{
+            Success    = $false
+            Service    = $null
+            Executable = ''
+            Message    = "Service '$ServiceName' was not found."
+        }
+    }
+
+    $binaryPath = $null
+
+    if ($null -ne $service.PSObject.Properties['BinaryPathName']) {
+        $binaryPath = $service.BinaryPathName
+    }
+
+    # Windows PowerShell may not expose BinaryPathName through Get-Service.
+    # In that case, retrieve PathName from Win32_Service through CIM.
+    if ($null -eq $binaryPath -or $binaryPath.Length -eq 0) {
+        $escapedServiceName = $ServiceName.Replace("'", "''")
+
+        $cimService = Get-CimInstance `
+            -ClassName 'Win32_Service' `
+            -Filter "Name='$escapedServiceName'" `
+            -ErrorAction SilentlyContinue
+
+        if ($null -ne $cimService) {
+            $binaryPath = $cimService.PathName
+        }
+    }
+
+    if ($null -eq $binaryPath -or $binaryPath.Length -eq 0) {
+        return [pscustomobject]@{
+            Success    = $false
+            Service    = $service
+            Executable = ''
+            Message    = "Could not obtain BinaryPathName for service '$ServiceName'."
+        }
+    }
+
+    $executable = ''
+
+    # Example:
+    #
+    # "C:\Program Files\MySQL\MySQL Server 8.4\bin\mysqld.exe"
+    #     --defaults-file="C:\ProgramData\MySQL\..."
+    #
+    # Quoted paths are straightforward because the closing quote marks
+    # the end of the executable path.
+    if ($binaryPath.StartsWith('"')) {
+        $closingQuote = $binaryPath.IndexOf('"', 1)
+
+        if ($closingQuote -gt 1) {
+            $executable = $binaryPath.Substring(
+                1,
+                $closingQuote - 1
+            )
+        }
+    }
+    else {
+        # For an unquoted service path, capture through the first .exe.
+        # This avoids incorrectly splitting paths containing spaces.
+        $match = [regex]::Match(
+            $binaryPath,
+            '^(?<executable>.*?\.exe)(?:\s|$)',
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+
+        if ($match.Success) {
+            $executable = $match.Groups['executable'].Value
+        }
+    }
+
+    if ($executable.Length -eq 0) {
+        return [pscustomobject]@{
+            Success    = $false
+            Service    = $service
+            Executable = ''
+            Message    = "Could not parse the executable from service path: $binaryPath"
+        }
+    }
+
+    if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+        return [pscustomobject]@{
+            Success    = $false
+            Service    = $service
+            Executable = $executable
+            Message    = "Service executable was not found: $executable"
+        }
+    }
+
+    return [pscustomobject]@{
+        Success    = $true
+        Service    = $service
+        Executable = $executable
+        Message    = ''
+    }
+}
 
 <#
 .SYNOPSIS
@@ -1312,6 +1435,11 @@ function Test-WingetPackageRequirement {
     applicable service state. Winget-backed requirements are delegated to the
     Winget package checker.
 
+    For Command requirements with a WingetId, a missing command is also
+    checked against Winget. If Winget reports the package as installed while
+    the command cannot be found, the installation is classified as broken
+    rather than missing and automatic remediation is suppressed.
+
     Each requirement ultimately produces a normalized envcheck result.
 #>
 function Test-SoftwareRequirements {
@@ -1361,7 +1489,12 @@ function Test-SoftwareRequirements {
             'WARN'
         }
 
-        $detection = Get-SoftwareDetectionStrategy -Software $item
+        # --------------------------------------------------------------------
+        # Determine the configured detection strategy
+        # --------------------------------------------------------------------
+
+        $detection = Get-SoftwareDetectionStrategy `
+            -Software $item
 
         if (-not $detection.Success) {
             Add-CheckResult `
@@ -1375,6 +1508,10 @@ function Test-SoftwareRequirements {
             continue
         }
 
+        # --------------------------------------------------------------------
+        # WingetPackage requirements have their own detection path
+        # --------------------------------------------------------------------
+
         if ($detection.Strategy -eq 'WingetPackage') {
             Test-WingetPackageRequirement `
                 -Software $item `
@@ -1383,139 +1520,17 @@ function Test-SoftwareRequirements {
 
             continue
         }
+
         # --------------------------------------------------------------------
-        # Locate the software
+        # Locate Command- or Service-backed software
         # --------------------------------------------------------------------
 
         $discovery = Resolve-SoftwareExecutable `
             -Software $item
 
         if (-not $discovery.Success) {
-            Add-CheckResult `
-                -Status $failureStatus `
-                -Category 'Software' `
-                -Name $name `
-                -Message $discovery.Message `
-                -Required $required `
-                -WingetId $wingetId `
-                -WingetSource $wingetSource `
-                -ExpectedVersion $expectedVersion `
-                -FailureKind $discovery.FailureKind
 
-            continue
-        }
-
-        # --------------------------------------------------------------------
-        # Determine the installed version
-        # --------------------------------------------------------------------
-
-        $versionResult = Get-InstalledVersion `
-            -Command $discovery.Executable `
-            -Arguments $versionArguments
-
-        if (-not $versionResult.Success) {
-            Add-CheckResult `
-                -Status $failureStatus `
-                -Category 'Software' `
-                -Name $name `
-                -Message "Found, but version could not be detected: $($versionResult.Output)" `
-                -Required $required `
-                -WingetId $wingetId `
-                -WingetSource $wingetSource `
-                -ExpectedVersion $expectedVersion `
-                -FailureKind 'VersionDetection'
-
-            continue
-        }
-
-        # --------------------------------------------------------------------
-        # Compare the installed and expected versions
-        # --------------------------------------------------------------------
-
-        $hasExpectedVersion = (
-            $null -ne $expectedVersion -and
-            $expectedVersion.Length -gt 0
-        )
-
-        if ($hasExpectedVersion) {
-            $versionMatches = Test-VersionMatch `
-                -Actual $versionResult.Version `
-                -Expected $expectedVersion
-
-            if (-not $versionMatches) {
-                Add-CheckResult `
-                    -Status $failureStatus `
-                    -Category 'Software' `
-                    -Name $name `
-                    -Message "Expected $expectedVersion; found $($versionResult.Version)." `
-                    -Required $required `
-                    -WingetId $wingetId `
-                    -WingetSource $wingetSource `
-                    -ExpectedVersion $expectedVersion `
-                    -FailureKind 'VersionMismatch'
-
-                continue
-            }
-        }
-
-        # --------------------------------------------------------------------
-        # Check service state when Service was used for discovery
-        # --------------------------------------------------------------------
-
-        $serviceState = Test-RequiredServiceState `
-            -Software $item `
-            -DiscoveryResult $discovery
-
-        if (-not $serviceState.Success) {
-            $message = (
-                "Version {0} detected, but {1}" -f
-                $versionResult.Version,
-                $serviceState.Message
-            )
-
-            Add-CheckResult `
-                -Status $failureStatus `
-                -Category 'Software' `
-                -Name $name `
-                -Message $message `
-                -Required $required `
-                -WingetId $wingetId `
-                -WingetSource $wingetSource `
-                -ExpectedVersion $expectedVersion `
-                -FailureKind 'ServiceState'
-
-            continue
-        }
-
-        # --------------------------------------------------------------------
-        # Build successful result
-        # --------------------------------------------------------------------
-
-        if ($hasExpectedVersion) {
-            $message = "$($versionResult.Version) (expected $expectedVersion)"
-        }
-        else {
-            $message = $versionResult.Version
-        }
-
-        if (
-            $serviceState.Applicable -and
-            $serviceState.Message.Length -gt 0
-        ) {
-            $message += "; $($serviceState.Message)"
-        }
-
-        Add-CheckResult `
-            -Status 'PASS' `
-            -Category 'Software' `
-            -Name $name `
-            -Message $message `
-            -Required $required `
-            -WingetId $wingetId `
-            -WingetSource $wingetSource `
-            -ExpectedVersion $expectedVersion
-    }
-}
+            # -------------------
 
 # ============================================================================
 # Environment-variable checks
@@ -1935,8 +1950,8 @@ function Install-WingetPackage {
         '--exact'
         '--accept-source-agreements'
         '--accept-package-agreements'
-        '--disable-interactivity'
-        '--silent'
+        '--interactive'
+        '--force'
     )
 
     if (
