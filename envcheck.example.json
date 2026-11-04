@@ -1,0 +1,70 @@
+{
+  "$schema": "./envcheck.schema.json",
+  "Name": "PIP Development Environment",
+  "Software": [
+    {
+      "Name": "Git",
+      "Command": "git",
+      "Version": "",
+      "Required": true,
+      "WingetId": "Git.Git"
+    },
+    {
+      "Name": "Node.js",
+      "Command": "node",
+      "Version": "18.20.8",
+      "Required": true,
+      "WingetId": "OpenJS.NodeJS.LTS"
+    },
+    {
+      "Name": "PHP",
+      "Command": "php",
+      "Version": "8.2.35",
+      "Required": true
+    },
+    {
+      "Name": "MySQL",
+      "Command": "mysql",
+      "Version": "8.0.31",
+      "Required": true
+    }
+  ],
+  "Environment": [
+    {
+      "Name": "APP_ENV",
+      "Required": false,
+      "Secret": false
+    },
+    {
+      "Name": "PIM_API_URL",
+      "Required": false,
+      "Secret": false
+    },
+    {
+      "Name": "PIM_TOKEN",
+      "Required": false,
+      "Secret": true
+    }
+  ],
+  "Files": [
+    {
+      "Name": ".env",
+      "Path": ".env",
+      "Required": false
+    },
+    {
+      "Name": "composer.json",
+      "Path": "composer.json",
+      "Required": false
+    }
+  ],
+  "Connectivity": [
+    {
+      "Name": "Local MySQL",
+      "Host": "localhost",
+      "Port": 3306,
+      "TimeoutMs": 3000,
+      "Required": false
+    }
+  ]
+}

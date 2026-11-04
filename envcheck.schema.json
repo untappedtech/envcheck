@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://untapped.tech/envcheck/schema/v1.json",
+  "title": "envcheck configuration",
+  "description": "Configuration schema for envcheck development-environment validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "Name",
+    "Software"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path or URI of the JSON Schema used to validate this envcheck configuration."
+    },
+    "Name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "Software": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/softwareRequirement"
+      },
+      "default": []
+    }
+  },
+  "$defs": {
+    "softwareRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Name"],
+      "properties": {
+        "Name": { "type": "string", "minLength": 1 },
+        "Command": { "type": "string", "minLength": 1 },
+        "Service": { "type": "string", "minLength": 1 },
+        "Path": { "type": "string", "minLength": 1 },
+        "WingetPackage": { "type": "string", "minLength": 1 },
+        "Version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Exact version or trailing-wildcard requirement such as 18.x or 8.4.x."
+        },
+        "VersionArguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "VersionPattern": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Regular expression used to extract a version. Must contain a named capture group named 'version'.",
+          "pattern": "\\(\\?<version>"
+        },
+        "Required": { "type": "boolean", "default": true },
+        "MustBeRunning": { "type": "boolean", "default": true },
+        "WingetId": { "type": "string", "minLength": 1 },
+        "WingetSource": { "type": "string", "minLength": 1, "default": "winget" }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            { "required": ["Command"] },
+            { "required": ["Service"] },
+            { "required": ["Path"] },
+            { "required": ["WingetPackage"] }
+          ]
+        },
+        {
+          "if": { "required": ["MustBeRunning"] },
+          "then": { "required": ["Service"] }
+        },
+        {
+          "if": { "required": ["VersionPattern"] },
+          "then": {
+            "required": ["Version"],
+            "not": { "required": ["WingetPackage"] }
+          }
+        },
+        {
+          "if": { "required": ["VersionArguments"] },
+          "then": { "not": { "required": ["WingetPackage"] } }
+        }
+      ]
+    },
+    "environmentRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Name"],
+      "properties": {
+        "Name": { "type": "string", "minLength": 1 },
+        "Required": { "type": "boolean", "default": true },
+        "Secret": { "type": "boolean", "default": false }
+      }
+    },
+    "fileRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Name", "Path"],
+      "properties": {
+        "Name": { "type": "string", "minLength": 1 },
+        "Path": { "type": "string", "minLength": 1 },
+        "Required": { "type": "boolean", "default": true }
+      }
+    },
+    "connectivityRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Name", "Host", "Port"],
+      "properties": {
+        "Name": { "type": "string", "minLength": 1 },
+        "Host": { "type": "string", "minLength": 1 },
+        "Port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "TimeoutMs": { "type": "integer", "minimum": 1, "default": 3000 },
+        "Required": { "type": "boolean", "default": true }
+      }
+    }
+  }
+}
