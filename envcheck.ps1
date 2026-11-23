@@ -36,14 +36,10 @@
     prompted unless -Yes is also specified.
 
 .PARAMETER Yes
-    Automatically accepts configured Winget installations.
+    Automatically authorizes configured Winget installations and accepts
+    any required Winget source and package agreements.
 
     Has no effect unless -Bootstrap is also specified.
-
-.PARAMETER NonInteractive
-    Prevents envcheck from prompting for input.
-
-    When combined with -Bootstrap without -Yes, installations are skipped.
 
 .EXAMPLE
     .\envcheck.ps1
@@ -57,8 +53,6 @@
 .EXAMPLE
     .\envcheck.ps1 -Bootstrap -Yes
 
-.EXAMPLE
-    .\envcheck.ps1 -Bootstrap -NonInteractive -Yes
 #>
 
 [CmdletBinding()]
@@ -66,8 +60,7 @@ param(
     [Parameter(Position = 0)]
     [string]$Config,
     [switch]$Bootstrap,
-    [switch]$Yes,
-    [switch]$NonInteractive
+    [switch]$Yes
 )
 
 Set-StrictMode -Version Latest
@@ -82,68 +75,10 @@ $EmbeddedConfig = @{
     Name         = 'PIP Development Environment'
 
     Software     = @(
-        # --------------------------------------------------------------------
-        # WAMP prerequisites
-        # --------------------------------------------------------------------
-
         @{
-            Name          = 'Visual C++ 2010 Redistributable x86'
-            WingetPackage = 'Microsoft.VCRedist.2010.x86'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'Visual C++ 2010 Redistributable x64'
-            WingetPackage = 'Microsoft.VCRedist.2010.x64'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'Visual C++ 2012 Redistributable x64'
-            WingetPackage = 'Microsoft.VCRedist.2012.x64'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'Visual C++ 2012 Redistributable x86'
-            WingetPackage = 'Microsoft.VCRedist.2012.x86'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'Visual C++ 2013 Redistributable x64'
-            WingetPackage = 'Microsoft.VCRedist.2013.x64'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'Visual C++ 2013 Redistributable x86'
-            WingetPackage = 'Microsoft.VCRedist.2013.x86'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'Visual C++ 2014 Redistributable x64'
-            WingetPackage = 'Microsoft.VCRedist.2015+.x64'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'Visual C++ 2014 Redistributable x86'
-            WingetPackage = 'Microsoft.VCRedist.2015+.x86'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'WAMP Server Package'
-            WingetPackage = 'Wampserver.Wampserver'
-            Required      = $true
-        },
-
-        @{
-            Name          = 'VS Code'
-            WingetPackage = 'Microsoft.VisualStudioCode'
-            Required      = $true
+            Name      = 'VS Code'
+            PackageId = 'Microsoft.VisualStudioCode'
+            Required  = $true
         },
 
 
@@ -160,56 +95,20 @@ $EmbeddedConfig = @{
             Required         = $true
         },
 
-        @{
-            Name     = 'Docker'
-            Command  = 'docker'
-            Required = $true
-            WingetId = 'Docker.DockerDesktop'
-        },
-
-        @{
-            Name     = 'Git'
-            Command  = 'git'
-            Required = $true
-            WingetId = 'Git.Git'
-        },
-
-        @{
-            Name     = 'Node.js'
-            Command  = 'node'
-            Version  = '18.20.8'
-            Required = $true
-            WingetId = 'OpenJS.NodeJS.18'
-            Source   = 'winget'
-        },
-
         # @{
-        #     Name     = 'PHP'
-        #     Command  = 'php'
-        #     Version  = '8.2.35'
-        #     Required = $true
+        #     Name      = 'Docker'
+        #     Command   = 'docker'
+        #     Required  = $true
+        #     PackageId = 'Docker.DockerDesktop'
         # },
 
         @{
-            Name     = 'jq'
-            Command  = 'jq'
-            Required = $false
-            WingetId = 'jqlang.jq'
-        },
-
-
-
-        # --------------------------------------------------------------------
-        # Services
-        # --------------------------------------------------------------------
-
-        @{
-            Name          = 'MySQL'
-            Service       = 'wampmysqld64'
-            Version       = '8.4.x'
-            Required      = $true
-            MustBeRunning = $true
+            Name      = 'Git'
+            Command   = 'git'
+            Required  = $true
+            PackageId = 'Git.Git'
         }
+
     )
 
 
@@ -233,15 +132,9 @@ $EmbeddedConfig = @{
         # },
         #
         # @{
-        #     Name     = 'PIM_API_URL'
+        #     Name     = 'WEB_API_TOKEN'
         #     Required = $true
         #     Secret   = $false
-        # },
-        #
-        # @{
-        #     Name     = 'PIM_TOKEN'
-        #     Required = $true
-        #     Secret   = $true
         # }
     )
 
@@ -263,12 +156,6 @@ $EmbeddedConfig = @{
         #     Path     = '.env'
         #     Required = $true
         # },
-        #
-        # @{
-        #     Name     = 'composer.json'
-        #     Path     = 'composer.json'
-        #     Required = $true
-        # }
     )
 
 
@@ -282,13 +169,13 @@ $EmbeddedConfig = @{
     Connectivity = @(
         # Example once we know the actual requirement:
         #
-        @{
-            Name      = 'Local MySQL'
-            Host      = 'localhost'
-            Port      = 3306
-            TimeoutMs = 3000
-            Required  = $true
-        }
+        # @{
+        #     Name      = 'Local MySQL'
+        #     Host      = 'localhost'
+        #     Port      = 3306
+        #     TimeoutMs = 3000
+        #     Required  = $true
+        # }
     )
 }
 
@@ -404,7 +291,7 @@ function Add-CheckResult {
 
         [bool]$Required = $true,
 
-        [string]$WingetId = '',
+        [string]$PackageId = '',
 
         [string]$WingetSource = 'winget',
 
@@ -419,7 +306,7 @@ function Add-CheckResult {
         Name            = $Name
         Message         = $Message
         Required        = $Required
-        WingetId        = $WingetId
+        PackageId       = $PackageId
         WingetSource    = $WingetSource
         ExpectedVersion = $ExpectedVersion
         FailureKind     = $FailureKind
@@ -852,7 +739,7 @@ function Get-ServiceExecutablePath {
     Command requirements are located through Get-Command. Service requirements
     are resolved through the Windows service's configured executable.
 
-    WingetPackage requirements are deliberately not resolved here because they
+    Package-only requirements are deliberately not resolved here because they
     are package-based rather than executable-based.
 #>
 function Resolve-SoftwareExecutable {
@@ -894,14 +781,14 @@ function Resolve-SoftwareExecutable {
         }
     }
 
-    if ($detection.Strategy -eq 'WingetPackage') {
+    if ($detection.Strategy -eq 'Package') {
         return [pscustomobject]@{
             Success     = $false
             Executable  = ''
-            Strategy    = 'WingetPackage'
+            Strategy    = 'Package'
             Service     = $null
             FailureKind = 'Configuration'
-            Message     = 'WingetPackage requirements do not resolve to an executable.'
+            Message     = 'Package-only requirements do not resolve to an executable.'
         }
     }
 
@@ -1004,7 +891,7 @@ function Resolve-SoftwareExecutable {
     its MustBeRunning requirement.
 
     MustBeRunning defaults to true. The check is not applicable to software
-    discovered through Command or WingetPackage.
+    discovered through Command or package-only detection.
 #>
 function Test-RequiredServiceState {
     param(
@@ -1064,8 +951,7 @@ function Test-RequiredServiceState {
     Determines how a software requirement should be detected.
 
 .DESCRIPTION
-    Identifies whether a software entry uses Command, Service, or WingetPackage
-    detection.
+    Identifies whether a software entry uses Command, Service, or package-only detection.
 
     Exactly one detection strategy must be configured. Missing or conflicting
     strategies are returned as configuration errors.
@@ -1086,9 +972,9 @@ function Get-SoftwareDetectionStrategy {
         -Name 'Service' `
         -Default ''
 
-    $wingetPackage = Get-ConfigValue `
+    $packageId = Get-ConfigValue `
         -Object $Software `
-        -Name 'WingetPackage' `
+        -Name 'PackageId' `
         -Default ''
 
     $strategies = [System.Collections.Generic.List[string]]::new()
@@ -1101,18 +987,6 @@ function Get-SoftwareDetectionStrategy {
         $strategies.Add('Service')
     }
 
-    if ($null -ne $wingetPackage -and $wingetPackage.Length -gt 0) {
-        $strategies.Add('WingetPackage')
-    }
-
-    if ($strategies.Count -eq 0) {
-        return [pscustomobject]@{
-            Success  = $false
-            Strategy = ''
-            Message  = 'Specify one of Command, Service, or WingetPackage.'
-        }
-    }
-
     if ($strategies.Count -gt 1) {
         $configured = $strategies -join ', '
 
@@ -1123,10 +997,26 @@ function Get-SoftwareDetectionStrategy {
         }
     }
 
+    if ($strategies.Count -eq 1) {
+        return [pscustomobject]@{
+            Success  = $true
+            Strategy = $strategies[0]
+            Message  = ''
+        }
+    }
+
+    if ($null -ne $packageId -and $packageId.Length -gt 0) {
+        return [pscustomobject]@{
+            Success  = $true
+            Strategy = 'Package'
+            Message  = ''
+        }
+    }
+
     return [pscustomobject]@{
-        Success  = $true
-        Strategy = $strategies[0]
-        Message  = ''
+        Success  = $false
+        Strategy = ''
+        Message  = 'Specify Command, Service, or PackageId.'
     }
 }
 
@@ -1197,8 +1087,6 @@ function Get-InstalledWingetPackage {
         '--id'
         $PackageId
         '--exact'
-        '--disable-interactivity'
-        '--accept-source-agreements'
     )
 
     if ($null -ne $Source -and $Source.Length -gt 0) {
@@ -1269,13 +1157,13 @@ function Get-InstalledWingetPackage {
     Version requirements support the same wildcard matching used by other
     software checks, such as 8.4.x.
 
-    The WingetPackage value is also used as the default remediation package
-    unless a separate WingetId is explicitly configured.
+    The PackageId value is also used as the default remediation package
+    unless a separate PackageId is explicitly configured.
 
     Adds the resulting PASS, WARN, or FAIL result to the common envcheck
     result collection.
 #>
-function Test-WingetPackageRequirement {
+function Test-PackageRequirement {
     param(
         [Parameter(Mandatory)]
         [object]$Software,
@@ -1289,7 +1177,7 @@ function Test-WingetPackageRequirement {
 
     $packageId = Get-ConfigValue `
         -Object $Software `
-        -Name 'WingetPackage' `
+        -Name 'PackageId' `
         -Default ''
 
     $expectedVersion = Get-ConfigValue `
@@ -1301,23 +1189,6 @@ function Test-WingetPackageRequirement {
         -Object $Software `
         -Name 'WingetSource' `
         -Default 'winget'
-
-    $explicitWingetId = Get-ConfigValue `
-        -Object $Software `
-        -Name 'WingetId' `
-        -Default ''
-
-    # If no explicit remediation package was configured, install the same
-    # package that is being used for detection.
-    if (
-        $null -ne $explicitWingetId -and
-        $explicitWingetId.Length -gt 0
-    ) {
-        $remediationPackageId = $explicitWingetId
-    }
-    else {
-        $remediationPackageId = $packageId
-    }
 
     $failureStatus = if ($Required) {
         'FAIL'
@@ -1341,7 +1212,7 @@ function Test-WingetPackageRequirement {
             -Name $Name `
             -Message $package.Message `
             -Required $Required `
-            -WingetId $remediationPackageId `
+            -PackageId $packageId `
             -WingetSource $source `
             -ExpectedVersion $expectedVersion `
             -FailureKind $package.FailureKind
@@ -1360,7 +1231,7 @@ function Test-WingetPackageRequirement {
             -Name $Name `
             -Message $package.Message `
             -Required $Required `
-            -WingetId $remediationPackageId `
+            -PackageId $packageId `
             -WingetSource $source `
             -ExpectedVersion $expectedVersion `
             -FailureKind 'Missing'
@@ -1397,7 +1268,7 @@ function Test-WingetPackageRequirement {
             -Name $Name `
             -Message $message `
             -Required $Required `
-            -WingetId $remediationPackageId `
+            -PackageId $packageId `
             -WingetSource $source
 
         return
@@ -1414,7 +1285,7 @@ function Test-WingetPackageRequirement {
             -Name $Name `
             -Message "Installed, but the package version could not be determined. Expected $expectedVersion." `
             -Required $Required `
-            -WingetId $remediationPackageId `
+            -PackageId $packageId `
             -WingetSource $source `
             -ExpectedVersion $expectedVersion `
             -FailureKind 'VersionDetection'
@@ -1443,7 +1314,7 @@ function Test-WingetPackageRequirement {
             -Name $Name `
             -Message "Expected $expectedVersion; found $($package.Version)." `
             -Required $Required `
-            -WingetId $remediationPackageId `
+            -PackageId $packageId `
             -WingetSource $source `
             -ExpectedVersion $expectedVersion `
             -FailureKind 'VersionMismatch'
@@ -1461,7 +1332,7 @@ function Test-WingetPackageRequirement {
         -Name $Name `
         -Message "$($package.Version) installed (expected $expectedVersion)" `
         -Required $Required `
-        -WingetId $remediationPackageId `
+        -PackageId $packageId `
         -WingetSource $source `
         -ExpectedVersion $expectedVersion
 }
@@ -1475,13 +1346,13 @@ function Test-WingetPackageRequirement {
 
         Command
         Service
-        WingetPackage
+        PackageId
 
     Executable-backed requirements are checked for installation, version, and
     applicable service state. Winget-backed requirements are delegated to the
     Winget package checker.
 
-    For Command requirements with a WingetId, a missing command is also
+    For command-backed requirements with a PackageId, a missing command is also
     checked against Winget. If Winget reports the package as installed while
     the command cannot be found, the installation is classified as broken
     rather than missing and automatic remediation is suppressed.
@@ -1523,9 +1394,9 @@ function Test-SoftwareRequirements {
             -Name 'Required' `
             -Default $true
 
-        $wingetId = Get-ConfigValue `
+        $packageId = Get-ConfigValue `
             -Object $item `
-            -Name 'WingetId' `
+            -Name 'PackageId' `
             -Default ''
 
         $wingetSource = Get-ConfigValue `
@@ -1560,11 +1431,11 @@ function Test-SoftwareRequirements {
         }
 
         # --------------------------------------------------------------------
-        # WingetPackage requirements have their own detection path
+        # Package-only requirements have their own detection path
         # --------------------------------------------------------------------
 
-        if ($detection.Strategy -eq 'WingetPackage') {
-            Test-WingetPackageRequirement `
+        if ($detection.Strategy -eq 'Package') {
+            Test-PackageRequirement `
                 -Software $item `
                 -Name $name `
                 -Required $required
@@ -1599,27 +1470,27 @@ function Test-SoftwareRequirements {
 
             $hasWingetRemediation = (
                 $detection.Strategy -eq 'Command' -and
-                $null -ne $wingetId -and
-                $wingetId.Length -gt 0
+                $null -ne $packageId -and
+                $packageId.Length -gt 0
             )
 
             if (
                 $discovery.FailureKind -eq 'Missing' -and
                 $hasWingetRemediation
             ) {
-                $wingetPackage = Get-InstalledWingetPackage `
-                    -PackageId $wingetId `
+                $package = Get-InstalledWingetPackage `
+                    -PackageId $packageId `
                     -Source $wingetSource
 
                 if (
-                    $wingetPackage.Success -and
-                    $wingetPackage.Installed
+                    $package.Success -and
+                    $package.Installed
                 ) {
                     $installedVersion = if (
-                        $null -ne $wingetPackage.Version -and
-                        $wingetPackage.Version.Length -gt 0
+                        $null -ne $package.Version -and
+                        $package.Version.Length -gt 0
                     ) {
-                        $wingetPackage.Version
+                        $package.Version
                     }
                     else {
                         'unknown version'
@@ -1632,7 +1503,7 @@ function Test-SoftwareRequirements {
                         'automatic bootstrap has been disabled.'
                     ) -f
                     $discovery.Message,
-                    $wingetId,
+                    $packageId,
                     $installedVersion
 
                     Add-CheckResult `
@@ -1641,7 +1512,7 @@ function Test-SoftwareRequirements {
                         -Name $name `
                         -Message $message `
                         -Required $required `
-                        -WingetId '' `
+                        -PackageId '' `
                         -WingetSource $wingetSource `
                         -ExpectedVersion $expectedVersion `
                         -FailureKind 'BrokenInstallation'
@@ -1653,7 +1524,7 @@ function Test-SoftwareRequirements {
             # ----------------------------------------------------------------
             # Normal missing-software failure.
             #
-            # Retain WingetId so genuinely missing software remains eligible
+            # Retain PackageId so genuinely missing software remains eligible
             # for remediation through -Bootstrap.
             # ----------------------------------------------------------------
 
@@ -1663,7 +1534,7 @@ function Test-SoftwareRequirements {
                 -Name $name `
                 -Message $discovery.Message `
                 -Required $required `
-                -WingetId $wingetId `
+                -PackageId $packageId `
                 -WingetSource $wingetSource `
                 -ExpectedVersion $expectedVersion `
                 -FailureKind $discovery.FailureKind
@@ -1687,7 +1558,7 @@ function Test-SoftwareRequirements {
                 -Name $name `
                 -Message "Found, but version could not be detected: $($versionResult.Output)" `
                 -Required $required `
-                -WingetId $wingetId `
+                -PackageId $packageId `
                 -WingetSource $wingetSource `
                 -ExpectedVersion $expectedVersion `
                 -FailureKind 'VersionDetection'
@@ -1725,7 +1596,7 @@ function Test-SoftwareRequirements {
                     -Name $name `
                     -Message "Expected $expectedVersion; found $($versionResult.Version)." `
                     -Required $required `
-                    -WingetId $wingetId `
+                    -PackageId $packageId `
                     -WingetSource $wingetSource `
                     -ExpectedVersion $expectedVersion `
                     -FailureKind 'VersionMismatch'
@@ -1755,7 +1626,7 @@ function Test-SoftwareRequirements {
                 -Name $name `
                 -Message $message `
                 -Required $required `
-                -WingetId $wingetId `
+                -PackageId $packageId `
                 -WingetSource $wingetSource `
                 -ExpectedVersion $expectedVersion `
                 -FailureKind 'ServiceState'
@@ -1787,7 +1658,7 @@ function Test-SoftwareRequirements {
             -Name $name `
             -Message $message `
             -Required $required `
-            -WingetId $wingetId `
+            -PackageId $packageId `
             -WingetSource $wingetSource `
             -ExpectedVersion $expectedVersion
     }
@@ -2154,25 +2025,18 @@ function Request-InstallationConsent {
         [Parameter(Mandatory)]
         [string]$Name,
 
-        [string]$Version = ''
+        [Parameter(Mandatory)]
+        [string]$PackageId
     )
 
     if ($Yes) {
         return $true
     }
 
-    if ($NonInteractive) {
-        return $false
-    }
+    Write-Host ''
+    Write-Host "Package: $PackageId" -ForegroundColor DarkGray
 
-    if ($Version.Length -eq 0) {
-        $prompt = "Install $Name using Winget? [y/N]"
-    }
-    else {
-        $prompt = "Install $Name version $Version using Winget? [y/N]"
-    }
-
-    $answer = Read-Host $prompt
+    $answer = Read-Host "Install $Name using Winget? [y/N]"
 
     return $answer -match '^(?i:y|yes)$'
 }
@@ -2186,8 +2050,9 @@ function Request-InstallationConsent {
     Builds and executes the Winget installation command represented by an
     envcheck result.
 
-    Uses exact package IDs, configured package sources, non-interactive
-    installer behavior, and accepted package/source agreements.
+    Uses exact package IDs and configured package sources. When -Yes is supplied,
+    installation is silent/non-interactive and required Winget agreements are
+    accepted automatically. Otherwise Winget remains interactive.
 
     Returns true when Winget exits successfully and false otherwise.
 #>
@@ -2207,23 +2072,9 @@ function Install-WingetPackage {
     $arguments = @(
         'install'
         '--id'
-        $Result.WingetId
+        $Result.PackageId
         '--exact'
-        '--accept-source-agreements'
-        '--accept-package-agreements'
-        '--interactive'
-        '--force'
     )
-
-    if (
-        $null -ne $Result.ExpectedVersion -and
-        $Result.ExpectedVersion.Length -gt 0
-    ) {
-        $arguments += @(
-            '--version'
-            $Result.ExpectedVersion
-        )
-    }
 
     if (
         $null -ne $Result.WingetSource -and
@@ -2232,6 +2083,19 @@ function Install-WingetPackage {
         $arguments += @(
             '--source'
             $Result.WingetSource
+        )
+    }
+
+    # -Yes authorizes unattended installation and automatic acceptance of
+    # Winget source and package agreements. Without -Yes, Winget and the
+    # underlying installer remain interactive and present agreements directly
+    # to the user.
+    if ($Yes) {
+        $arguments += @(
+            '--accept-source-agreements'
+            '--accept-package-agreements'
+            '--disable-interactivity'
+            '--silent'
         )
     }
 
@@ -2277,7 +2141,7 @@ function Invoke-EnvCheckBootstrap {
             Where-Object {
                 $_.Status -ne 'PASS' -and
                 $_.FailureKind -eq 'Missing' -and
-                $_.WingetId.Length -gt 0
+                $_.PackageId.Length -gt 0
             }
     )
 
@@ -2285,7 +2149,7 @@ function Invoke-EnvCheckBootstrap {
         $script:Results |
             Where-Object {
                 $_.FailureKind -eq 'VersionMismatch' -and
-                $_.WingetId.Length -gt 0
+                $_.PackageId.Length -gt 0
             }
     )
 
@@ -2315,7 +2179,7 @@ function Invoke-EnvCheckBootstrap {
     foreach ($result in $missingSoftware) {
         $approved = Request-InstallationConsent `
             -Name $result.Name `
-            -Version $result.ExpectedVersion
+            -PackageId $result.PackageId
 
         if (-not $approved) {
             Write-Host "SKIP  $($result.Name) was not installed." `
@@ -2388,7 +2252,7 @@ function Write-EnvCheckSummary {
         $script:Results |
             Where-Object {
                 $_.FailureKind -eq 'Missing' -and
-                $_.WingetId.Length -gt 0
+                $_.PackageId.Length -gt 0
             }
     ).Count -gt 0
 

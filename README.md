@@ -1,6 +1,6 @@
 # envcheck
 
-Declarative development-environment validation and bootstrap for Windows.
+Declarative development-environment validation and cautious bootstrap for Windows.
 
 `envcheck` answers a simple question:
 
@@ -73,7 +73,7 @@ Development Environment
 │   ├── commands
 │   ├── services
 │   ├── explicit paths
-│   └── Winget packages
+│   └── package IDs
 ├── Environment variables
 ├── Files
 └── Connectivity
@@ -81,7 +81,12 @@ Development Environment
 
 ## Software detection
 
-A software requirement uses exactly one detection strategy.
+A software requirement can use `Command`, `Service`, or `Path` as its primary detector. These three properties are mutually exclusive.
+
+`PackageId` has two roles:
+
+- By itself, `PackageId` is used for Winget package detection and remediation.
+- With `Command`, `Service`, or `Path`, that property controls detection while `PackageId` identifies the Winget package envcheck may install when the requirement is genuinely missing.
 
 ### Command
 
@@ -92,13 +97,13 @@ Resolve and execute a command available through `PATH`:
   "Name": "Git",
   "Command": "git",
   "Required": true,
-  "WingetId": "Git.Git"
+  "PackageId": "Git.Git"
 }
 ```
 
 ### Windows service
 
-Resolve software through a Windows service and inspect the executable backing the service:
+Resolve software through a Windows service and inspect the executable backing the service. Service-backed requirements remain entries in the `Software` collection; there is no separate top-level `Services` collection:
 
 ```json
 {
@@ -125,17 +130,17 @@ Validate software installed outside `PATH`:
 
 ### Winget package
 
-Validate software by its Winget package registration:
+Use `PackageId` by itself when package registration is the appropriate detector:
 
 ```json
 {
   "Name": "Visual C++ 2013 Redistributable x64",
-  "WingetPackage": "Microsoft.VCRedist.2013.x64",
+  "PackageId": "Microsoft.VCRedist.2013.x64",
   "Required": true
 }
 ```
 
-`Command`, `Service`, `Path`, and `WingetPackage` are mutually exclusive for a single requirement.
+`Command`, `Service`, and `Path` are mutually exclusive. `PackageId` may accompany any one of them as remediation metadata, or may be used by itself for package-only detection.
 
 ## Version requirements
 
@@ -168,16 +173,16 @@ Use a trailing `x` wildcard when later components are intentionally unconstraine
   "Command": "node",
   "Version": "18.x",
   "Required": true,
-  "WingetId": "OpenJS.NodeJS.18"
+  "PackageId": "OpenJS.NodeJS.18"
 }
 ```
 
-| Installed | Required | Result |
-|---|---|---|
-| `18.20.8` | `18.20.8` | PASS |
-| `18.20.8` | `18.x` | PASS |
-| `8.4.9` | `8.4.x` | PASS |
-| `8.5.0` | `8.4.x` | FAIL |
+| Installed | Required  | Result |
+| --------- | --------- | ------ |
+| `18.20.8` | `18.20.8` | PASS   |
+| `18.20.8` | `18.x`    | PASS   |
+| `8.4.9`   | `8.4.x`   | PASS   |
+| `8.5.0`   | `8.4.x`   | FAIL   |
 
 Without a wildcard, envcheck requires an exact component-for-component match.
 
@@ -206,9 +211,7 @@ Represent that requirement as:
 {
   "Name": "WSL 2",
   "Command": "wsl",
-  "VersionArguments": [
-    "--status"
-  ],
+  "VersionArguments": ["--status"],
   "VersionPattern": "Default Version:\\s*(?<version>\\d+)",
   "Version": "2",
   "Required": true
@@ -336,22 +339,20 @@ See [`envcheck.example.json`](./envcheck.example.json) for a copy-ready, generic
       "Name": "Git",
       "Command": "git",
       "Required": true,
-      "WingetId": "Git.Git"
+      "PackageId": "Git.Git"
     },
     {
       "Name": "Node.js",
       "Command": "node",
       "Version": "18.x",
       "Required": true,
-      "WingetId": "OpenJS.NodeJS.18"
+      "PackageId": "OpenJS.NodeJS.18"
     },
     {
       "Name": "WSL 2",
       "Command": "wsl",
-      "VersionArguments": [
-        "--status"
-      ],
-      "VersionPattern": "Default Version:\\s*(?<version>\\d+)",
+      "VersionArguments": ["--status"],
+      "VersionPattern": "Default Version:\s*(?<version>\d+)",
       "Version": "2",
       "Required": true
     },
@@ -373,7 +374,7 @@ See [`envcheck.example.json`](./envcheck.example.json) for a copy-ready, generic
   "Files": [
     {
       "Name": "Environment configuration",
-      "Path": ".env",
+      "Path": "C:\path\to\project\.env",
       "Required": true
     }
   ],
@@ -397,34 +398,32 @@ By default, envcheck is read-only:
 .\envcheck.ps1
 ```
 
-When a missing requirement has a configured Winget remediation package, bootstrap mode can offer to install it:
+When a missing requirement has a configured `PackageId`, bootstrap mode can offer to install it:
 
 ```powershell
 .\envcheck.ps1 -Bootstrap
 ```
 
-Each installation requires confirmation unless automatic approval is explicitly enabled:
+Without `-Yes`, envcheck asks before each eligible installation. Winget and the underlying installer remain interactive, so any required source or package agreements are presented to the user rather than accepted automatically.
+
+For fully approved bootstrap:
 
 ```powershell
 .\envcheck.ps1 -Bootstrap -Yes
 ```
 
-For unattended execution:
-
-```powershell
-.\envcheck.ps1 -Bootstrap -NonInteractive -Yes
-```
+`-Yes` approves all eligible envcheck package installations and automatically accepts any required Winget source and package agreements. In this mode envcheck uses Winget's unattended/silent installation behavior. `-Yes` has no effect without `-Bootstrap`.
 
 envcheck deliberately distinguishes among failure states:
 
-| Failure kind | Meaning | Automatic remediation |
-|---|---|---|
-| `Missing` | Required software cannot be found | May be offered |
-| `VersionMismatch` | Software exists but does not satisfy the version requirement | No |
-| `BrokenInstallation` | Registration exists but the usable software does not | No |
-| `ServiceState` | A required service is not in the expected state | No |
-| `VersionDetection` | Software exists but its version cannot be determined | No |
-| `Configuration` | The envcheck requirement is invalid or ambiguous | No |
+| Failure kind         | Meaning                                                      | Automatic remediation |
+| -------------------- | ------------------------------------------------------------ | --------------------- |
+| `Missing`            | Required software cannot be found                            | May be offered        |
+| `VersionMismatch`    | Software exists but does not satisfy the version requirement | No                    |
+| `BrokenInstallation` | Registration exists but the usable software does not         | No                    |
+| `ServiceState`       | A required service is not in the expected state              | No                    |
+| `VersionDetection`   | Software exists but its version cannot be determined         | No                    |
+| `Configuration`      | The envcheck requirement is invalid or ambiguous             | No                    |
 
 The goal is safe reconciliation, not aggressive mutation of the workstation.
 
@@ -463,11 +462,11 @@ Summary
 
 ## Exit codes
 
-| Code | Meaning |
-|---|---|
-| `0` | All required checks passed |
-| `1` | One or more required checks failed |
-| `2` | envcheck itself encountered an error |
+| Code | Meaning                              |
+| ---- | ------------------------------------ |
+| `0`  | All required checks passed           |
+| `1`  | One or more required checks failed   |
+| `2`  | envcheck itself encountered an error |
 
 ## Design principles
 
@@ -495,7 +494,7 @@ How software is detected is not necessarily how it is installed:
   "Name": "Node.js",
   "Command": "node",
   "Version": "18.x",
-  "WingetId": "OpenJS.NodeJS.18"
+  "PackageId": "OpenJS.NodeJS.18"
 }
 ```
 
@@ -516,7 +515,7 @@ Remediation:
 
 Package-manager state is evidence, not proof.
 
-A healthy development requirement may involve checking executable existence, command execution, version, service state, file integrity, and connectivity.
+A healthy development requirement may involve checking executable existence, command execution, version, service state, file integrity, and connectivity. Package-manager registration is evidence, not proof of health.
 
 ### Prefer diagnosis over destructive repair
 
@@ -555,6 +554,7 @@ Recommended `.gitignore` entries:
 envcheck.json
 envcheck.*.json
 !envcheck.example.json
+!envcheck.schema.json
 
 .env
 .env.*
@@ -586,6 +586,7 @@ Exercise both operating modes:
 ```powershell
 .\envcheck.ps1
 .\envcheck.ps1 -Bootstrap
+.\envcheck.ps1 -Bootstrap -Yes
 ```
 
 ## License

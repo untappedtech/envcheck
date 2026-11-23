@@ -1,32 +1,57 @@
 {
   "$schema": "./envcheck.schema.json",
-  "Name": "PIP Development Environment",
+  "Name": "Example Development Environment",
   "Software": [
     {
       "Name": "Git",
       "Command": "git",
-      "Version": "",
-      "Required": true,
-      "WingetId": "Git.Git"
+      "PackageId": "Git.Git",
+      "Required": false
     },
     {
       "Name": "Node.js",
       "Command": "node",
-      "Version": "18.20.8",
-      "Required": true,
-      "WingetId": "OpenJS.NodeJS.LTS"
+      "Version": "18.x",
+      "PackageId": "OpenJS.NodeJS.18",
+      "Required": false
+    },
+    {
+      "Name": "WSL 2",
+      "Command": "wsl",
+      "VersionArguments": [
+        "--status"
+      ],
+      "VersionPattern": "Default Version:\\s*(?<version>\\d+)",
+      "Version": "2",
+      "Required": false
+    },
+    {
+      "Name": "Go",
+      "Command": "go",
+      "VersionArguments": [
+        "version"
+      ],
+      "Version": "1.27.x",
+      "PackageId": "GoLang.Go",
+      "Required": false
     },
     {
       "Name": "PHP",
-      "Command": "php",
-      "Version": "8.2.35",
-      "Required": true
+      "Path": "C:\\tools\\php\\php.exe",
+      "Version": "8.2.x",
+      "Required": false
     },
     {
       "Name": "MySQL",
-      "Command": "mysql",
-      "Version": "8.0.31",
-      "Required": true
+      "Service": "MySQL",
+      "Version": "8.4.x",
+      "Required": false,
+      "MustBeRunning": true
+    },
+    {
+      "Name": "PowerToys",
+      "PackageId": "Microsoft.PowerToys",
+      "Required": false
     }
   ],
   "Environment": [
@@ -36,31 +61,26 @@
       "Secret": false
     },
     {
-      "Name": "PIM_API_URL",
-      "Required": false,
-      "Secret": false
-    },
-    {
-      "Name": "PIM_TOKEN",
+      "Name": "API_TOKEN",
       "Required": false,
       "Secret": true
     }
   ],
   "Files": [
     {
-      "Name": ".env",
+      "Name": "Environment configuration",
       "Path": ".env",
       "Required": false
     },
     {
-      "Name": "composer.json",
+      "Name": "Composer configuration",
       "Path": "composer.json",
       "Required": false
     }
   ],
   "Connectivity": [
     {
-      "Name": "Local MySQL",
+      "Name": "Local database",
       "Host": "localhost",
       "Port": 3306,
       "TimeoutMs": 3000,

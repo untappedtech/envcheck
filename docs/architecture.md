@@ -4,7 +4,7 @@
 
 envcheck is a declarative development-environment validator and cautious bootstrap tool for Windows.
 
-The architecture is built around a simple separation:
+The architecture separates five concerns:
 
 ```text
 Configuration
@@ -29,15 +29,15 @@ The current implementation is a PowerShell prototype. The prototype exists to st
 
 ### Configuration describes intent
 
-Configuration should describe the requirement:
+Configuration should describe the required capability:
 
 ```json
 {
   "Name": "Node.js",
   "Command": "node",
   "Version": "18.x",
-  "Required": true,
-  "WingetId": "OpenJS.NodeJS.18"
+  "PackageId": "OpenJS.NodeJS.18",
+  "Required": true
 }
 ```
 
@@ -45,20 +45,22 @@ The configuration should not normally need to describe shell plumbing, output pa
 
 ### Detection and remediation are separate
 
-How software is detected is not necessarily how software is provisioned.
+How software is detected is not necessarily how it is provisioned.
 
-In the Node example:
+For the Node.js example:
 
 ```text
 Detection
-    Get-Command node
+    resolve and execute node
 
 Validation
     node --version must satisfy 18.x
 
 Remediation
-    Winget package OpenJS.NodeJS.18
+    package OpenJS.NodeJS.18
 ```
+
+`Command` determines whether the software is usable. `PackageId` identifies the package envcheck may install if the command is genuinely missing.
 
 ### Registration is not health
 
@@ -68,11 +70,11 @@ envcheck therefore prefers functional checks where possible.
 
 ### Prefer diagnosis over destructive repair
 
-When envcheck cannot confidently distinguish safe remediation from potentially destructive modification, it reports the condition instead of changing the system.
+When envcheck cannot confidently distinguish safe remediation from potentially destructive modification, envcheck reports the condition instead of changing the system.
 
 ## Configuration model
 
-The preferred public configuration format is JSON.
+The preferred public configuration format is JSON:
 
 ```json
 {
@@ -85,26 +87,37 @@ The preferred public configuration format is JSON.
 }
 ```
 
-The configuration schema is defined by `envcheck.schema.json`.
+`envcheck.schema.json` defines the current configuration contract. The schema uses descriptions, examples, and strict unknown-property rejection to provide useful editor validation and autocomplete.
+
+The planned canonical versioned schema URI is:
+
+```text
+https://untapped.tech/envcheck/schema/v1.json
+```
 
 ## Software requirements
 
-Each software requirement uses exactly one detection strategy.
+A software requirement may use `Command`, `Service`, or `Path` as its primary detector. Those three properties are mutually exclusive.
 
-### Command
+`PackageId` has two roles:
+
+- By itself, `PackageId` provides package-based detection and remediation.
+- Alongside `Command`, `Service`, or `Path`, the other property controls detection while `PackageId` provides remediation metadata.
+
+### Command detection
 
 ```json
 {
   "Name": "Git",
   "Command": "git",
-  "Required": true,
-  "WingetId": "Git.Git"
+  "PackageId": "Git.Git",
+  "Required": true
 }
 ```
 
-The command is resolved through the shell and executed for version detection.
+The command is resolved through `PATH` and executed for version detection. If the command is genuinely missing, `PackageId` identifies the package envcheck may install.
 
-### Service
+### Service detection
 
 ```json
 {
@@ -116,9 +129,11 @@ The command is resolved through the shell and executed for version detection.
 }
 ```
 
-Service discovery resolves the Windows service, obtains the executable from `BinaryPathName`, validates the executable and version, then optionally validates service state.
+Service discovery resolves the Windows service, obtains its executable from `BinaryPathName`, validates the executable and version, and optionally validates service state.
 
-### Path
+Service-backed requirements remain entries in the top-level `Software` collection. There is no separate top-level `Services` collection.
+
+### Path detection
 
 ```json
 {
@@ -131,37 +146,48 @@ Service discovery resolves the Windows service, obtains the executable from `Bin
 
 Path detection supports runtimes that intentionally are not globally available through `PATH`.
 
-### WingetPackage
+### Package-only detection
 
 ```json
 {
-  "Name": "Visual C++ 2013 Redistributable x64",
-  "WingetPackage": "Microsoft.VCRedist.2013.x64",
-  "Required": true
+  "Name": "PowerToys",
+  "PackageId": "Microsoft.PowerToys",
+  "Required": false
 }
 ```
 
-This strategy uses package registration as the requirement itself. The same package ID is the default remediation identity.
+When no `Command`, `Service`, or `Path` is configured, envcheck detects the requirement through Winget package registration. The same `PackageId` is used for remediation.
 
-### Mutual exclusivity
+### Detection constraints
 
-These properties are mutually exclusive:
+Valid combinations include:
 
 ```text
 Command
+Command + PackageId
 Service
+Service + PackageId
 Path
-WingetPackage
+Path + PackageId
+PackageId only
 ```
 
-Zero strategies is a configuration error. More than one strategy is ambiguous and is also a configuration error.
+Invalid combinations include:
+
+```text
+Command + Service
+Command + Path
+Service + Path
+```
+
+A requirement with none of `Command`, `Service`, `Path`, or `PackageId` is a configuration error.
 
 ## Version subsystem
 
 Version handling consists of three stages:
 
 ```text
-Execute version command
+Execute version command or inspect package version
         |
         v
 Extract normalized version
@@ -172,7 +198,7 @@ Compare against requirement
 
 ### Default invocation
 
-`--version` is the default version argument.
+`--version` is the default argument for executable-backed version detection.
 
 A requirement can override it:
 
@@ -181,6 +207,8 @@ A requirement can override it:
   "VersionArguments": ["--status"]
 }
 ```
+
+`VersionArguments` applies only to `Command`, `Service`, or `Path` detection.
 
 ### Generic extraction
 
@@ -203,7 +231,7 @@ Common prefixes such as `v` and `go` are ignored.
 
 ### Custom extraction
 
-Nonstandard output can use `VersionPattern`:
+Nonstandard executable output can use `VersionPattern`:
 
 ```json
 {
@@ -219,6 +247,8 @@ Nonstandard output can use `VersionPattern`:
 The regular expression must provide a named `version` capture group.
 
 Native command output is normalized before parsing. This includes removing embedded NUL characters that some Windows commands can emit when their console output is captured.
+
+`VersionPattern` is an escape hatch for nonstandard output. Conventional software should continue using generic version extraction.
 
 ### Version matching
 
@@ -238,9 +268,11 @@ Trailing wildcard matching:
 
 Full semantic-version constraint expressions are intentionally not implemented yet.
 
+A plain `Version` is valid for package-only requirements because Winget can report an installed package version. `VersionArguments` and `VersionPattern` require executable-backed detection.
+
 ## Environment requirements
 
-Environment-variable checks currently read variables visible to the running process.
+Environment-variable checks currently read variables visible to the running process:
 
 ```json
 {
@@ -250,11 +282,9 @@ Environment-variable checks currently read variables visible to the running proc
 }
 ```
 
-Null, empty, and whitespace-only values do not satisfy a requirement.
+Null, empty, and whitespace-only values do not satisfy a requirement. Secret values are redacted from output.
 
-Secret values are redacted from output.
-
-Future configuration sources may include dotenv files without changing the requirement semantics.
+Future configuration sources may include dotenv files without changing the core requirement semantics.
 
 ## File requirements
 
@@ -298,8 +328,7 @@ Category
 Name
 Message
 Required
-WingetId
-WingetSource
+PackageId
 ExpectedVersion
 FailureKind
 ```
@@ -326,17 +355,19 @@ WingetUnavailable
 EmptyFile
 ```
 
-The exact list may evolve, but failure classification should remain explicit because remediation policy depends on it.
+The exact set may evolve, but failure classification should remain explicit because remediation policy depends on it.
+
+Winget remains an implementation provider in the PowerShell V0.x code, but Winget-specific source selection is not part of the public JSON configuration model.
 
 ## Broken-installation detection
 
-A key architectural feature is distinguishing missing software from inconsistent package state.
+A key architectural feature is distinguishing missing software from inconsistent package state:
 
 ```text
 Command missing
       |
       v
-Winget remediation configured?
+PackageId configured?
       |
       v
 Winget package installed?
@@ -348,22 +379,46 @@ Winget package installed?
 
 A `BrokenInstallation` is deliberately not eligible for ordinary automatic bootstrap.
 
+This prevents envcheck from treating a damaged package registration as though the software were simply absent.
+
 ## Remediation architecture
 
-Read-only validation is the default.
+Read-only validation is the default. Bootstrap is explicitly requested by the user.
 
-Bootstrap is explicitly requested by the user.
+### Interactive bootstrap
 
-The intended safety matrix is:
+```powershell
+.\envcheck.ps1 -Bootstrap
+```
 
-| Condition | Automatic remediation |
-|---|---|
-| Missing software with known Winget package | May be offered |
-| Version mismatch | No |
-| Broken installation | No |
-| Invalid service state | No |
-| Invalid envcheck configuration | No |
-| Version detection failure | No |
+envcheck asks before each eligible installation. Winget and the underlying installer remain interactive, so required source and package agreements are presented to the user and are not accepted automatically by envcheck.
+
+### Fully approved bootstrap
+
+```powershell
+.\envcheck.ps1 -Bootstrap -Yes
+```
+
+`-Yes` authorizes:
+
+1. all eligible package installations,
+2. automatic acceptance of required Winget source and package agreements,
+3. unattended/silent installation behavior.
+
+`-Yes` has no effect without `-Bootstrap`.
+
+The current CLI intentionally has only interactive bootstrap and fully approved bootstrap modes.
+
+### Remediation safety matrix
+
+| Condition                                 | Automatic remediation |
+| ----------------------------------------- | --------------------- |
+| Missing software with a known `PackageId` | May be offered        |
+| Version mismatch                          | No                    |
+| Broken installation                       | No                    |
+| Invalid service state                     | No                    |
+| Invalid envcheck configuration            | No                    |
+| Version detection failure                 | No                    |
 
 The configuration's `Version` is a validation requirement, not necessarily a package-manager installation version.
 
@@ -374,11 +429,12 @@ For example:
   "Name": "Node.js",
   "Command": "node",
   "Version": "18.x",
-  "WingetId": "OpenJS.NodeJS.18"
+  "PackageId": "OpenJS.NodeJS.18",
+  "Required": true
 }
 ```
 
-should not cause envcheck to pass `--version 18.x` to Winget.
+must not cause envcheck to pass `--version 18.x` to Winget. `OpenJS.NodeJS.18` selects the Node 18 package family; envcheck independently validates that the resulting installed version satisfies `18.x`.
 
 ## Configuration loading
 
@@ -404,7 +460,7 @@ The repository JSON Schema serves three purposes:
 2. autocomplete and discoverability,
 3. an explicit machine-readable configuration contract.
 
-Unknown properties are rejected to catch errors such as:
+Unknown properties are rejected to catch mistakes such as:
 
 ```json
 {
@@ -413,6 +469,16 @@ Unknown properties are rejected to catch errors such as:
 ```
 
 instead of silently ignoring the typo.
+
+The schema uses:
+
+- `description` for portable user-facing help,
+- `examples` for representative values,
+- `markdownDescription` selectively for richer editor help,
+- `$comment` for maintainer-facing design notes,
+- validation rules that mirror the current PowerShell implementation.
+
+Schema changes must remain synchronized with `envcheck.ps1`, `envcheck.example.json`, the README, and relevant documentation.
 
 ## Future Go architecture
 
@@ -456,6 +522,8 @@ remediation/
 ```
 
 Detection strategies should become explicit types rather than one large structure containing many optional fields.
+
+The nested or per-platform package model may make sense in the Go version when multiple operating systems and package managers are actually supported. The PowerShell V0.x schema intentionally keeps a single flat `PackageId` because it supports only Winget.
 
 ## Architectural boundaries to preserve
 

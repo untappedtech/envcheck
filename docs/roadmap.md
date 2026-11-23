@@ -46,7 +46,7 @@ The immediate goal is reliability rather than breadth.
 - Harden `Command` detection.
 - Harden `Path` detection.
 - Harden service `BinaryPathName` parsing.
-- Verify `WingetPackage` parsing behavior across expected Winget output.
+- Verify `PackageId` parsing behavior across expected Winget output.
 - Preserve mutual exclusivity among detection strategies.
 
 ### Version handling
@@ -164,13 +164,7 @@ Possible future configuration:
   "Name": "PHP",
   "Path": "C:\\tools\\php\\php.exe",
   "Version": "8.2.x",
-  "Modules": [
-    "fileinfo",
-    "sockets",
-    "curl",
-    "mbstring",
-    "pdo_mysql"
-  ]
+  "Modules": ["fileinfo", "sockets", "curl", "mbstring", "pdo_mysql"]
 }
 ```
 
@@ -260,9 +254,7 @@ The initial prototype can rely on declaration order, but a future version may su
 {
   "Name": "Example Runtime",
   "WingetPackage": "Vendor.Runtime",
-  "DependsOn": [
-    "Visual C++ Runtime"
-  ]
+  "DependsOn": ["Visual C++ Runtime"]
 }
 ```
 

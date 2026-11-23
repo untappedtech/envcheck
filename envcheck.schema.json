@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://untapped.tech/envcheck/schema/v1.json",
   "title": "envcheck configuration",
-  "description": "Configuration schema for envcheck development-environment validation.",
+  "description": "Configuration schema for envcheck development-environment validation and optional package remediation.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,12 +16,45 @@
     },
     "Name": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Human-readable name of the development environment shown in envcheck output."
+    },
+    "SchemaVersion": {
+      "type": "integer",
+      "enum": [
+        1
+      ],
+      "description": "Schema version of this envcheck configuration. Defaults to 1 when omitted."
     },
     "Software": {
       "type": "array",
+      "description": "Software and platform capabilities required by the development environment.",
       "items": {
         "$ref": "#/$defs/softwareRequirement"
+      },
+      "default": []
+    },
+    "Environment": {
+      "type": "array",
+      "description": "Environment variables that envcheck validates in the current process environment.",
+      "items": {
+        "$ref": "#/$defs/environmentRequirement"
+      },
+      "default": []
+    },
+    "Files": {
+      "type": "array",
+      "description": "Files that envcheck requires to exist as nonempty files.",
+      "items": {
+        "$ref": "#/$defs/fileRequirement"
+      },
+      "default": []
+    },
+    "Connectivity": {
+      "type": "array",
+      "description": "TCP endpoints that envcheck requires to be reachable within a configured timeout.",
+      "items": {
+        "$ref": "#/$defs/connectivityRequirement"
       },
       "default": []
     }
@@ -29,91 +62,352 @@
   "$defs": {
     "softwareRequirement": {
       "type": "object",
+      "description": "A software requirement. Command, Service, and Path are mutually exclusive primary detection methods. PackageId may be used by itself for package-based detection, or alongside Command, Service, or Path as the Winget remediation identity.",
+      "$comment": "PackageId intentionally has two roles in V0.x. Alone it is the detector and remediation package. With Command, Service, or Path, the primary detector establishes health and PackageId supplies remediation metadata.",
       "additionalProperties": false,
-      "required": ["Name"],
+      "required": [
+        "Name"
+      ],
       "properties": {
-        "Name": { "type": "string", "minLength": 1 },
-        "Command": { "type": "string", "minLength": 1 },
-        "Service": { "type": "string", "minLength": 1 },
-        "Path": { "type": "string", "minLength": 1 },
-        "WingetPackage": { "type": "string", "minLength": 1 },
+        "Name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable software name shown in envcheck output."
+        },
+        "Command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Command name that envcheck resolves through PATH and executes for version detection, for example git, node, jq, pwsh, or go. Mutually exclusive with Service and Path.",
+          "examples": [
+            "git",
+            "node",
+            "pwsh",
+            "go"
+          ]
+        },
+        "Service": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Windows service name used to locate the service executable and optionally validate that the service is running. Mutually exclusive with Command and Path."
+        },
+        "Path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Explicit path to an executable that envcheck validates directly instead of resolving a command through PATH. Mutually exclusive with Command and Service."
+        },
         "Version": {
           "type": "string",
           "minLength": 1,
-          "description": "Exact version or trailing-wildcard requirement such as 18.x or 8.4.x."
+          "pattern": "^\\d+(?:\\.\\d+)*(?:\\.x)?$",
+          "description": "Required installed version. Supports numeric exact versions such as 18.20.8 and a trailing wildcard such as 18.x or 8.4.x.",
+          "examples": [
+            "18.20.8",
+            "18.x",
+            "8.4.x"
+          ]
         },
         "VersionArguments": {
           "type": "array",
-          "items": { "type": "string" },
-          "minItems": 1
+          "description": "Arguments passed to a Command, Service, or Path executable to obtain version information. Defaults to [\"--version\"] when omitted. Not applicable to package-only detection.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "default": [
+            "--version"
+          ],
+          "examples": [
+            [
+              "--version"
+            ],
+            [
+              "--status"
+            ]
+          ]
         },
         "VersionPattern": {
           "type": "string",
           "minLength": 1,
-          "description": "Regular expression used to extract a version. Must contain a named capture group named 'version'.",
-          "pattern": "\\(\\?<version>"
+          "description": "Regular expression used instead of envcheck's generic version parser. Must contain a named capture group called 'version', for example: Default Version:\\s*(?<version>\\d+).",
+          "$comment": "VersionPattern is an escape hatch for nonstandard command output. Keep ordinary software on the generic parser whenever possible.",
+          "pattern": "\\(\\?<version>",
+          "examples": [
+            "Default Version:\\s*(?<version>\\d+)"
+          ]
         },
-        "Required": { "type": "boolean", "default": true },
-        "MustBeRunning": { "type": "boolean", "default": true },
-        "WingetId": { "type": "string", "minLength": 1 },
-        "WingetSource": { "type": "string", "minLength": 1, "default": "winget" }
+        "Required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether failure of this requirement produces FAIL instead of WARN. Defaults to true."
+        },
+        "MustBeRunning": {
+          "type": "boolean",
+          "default": true,
+          "description": "For Service requirements, whether the Windows service must currently be running. Valid only when Service is configured. Defaults to true."
+        },
+        "PackageId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Winget package identifier. By itself, PackageId is used for package detection and remediation. With Command, Service, or Path, that property controls detection and PackageId identifies the package envcheck may install when the requirement is genuinely missing.",
+          "markdownDescription": "**Package identifier.** When used alone, `PackageId` controls package detection and remediation. When used with `Command`, `Service`, or `Path`, that property controls detection while `PackageId` identifies the package envcheck may install if the requirement is genuinely missing.",
+          "examples": [
+            "Git.Git",
+            "OpenJS.NodeJS.18",
+            "jqlang.jq"
+          ]
+        }
       },
       "allOf": [
         {
+          "$comment": "At least one detection route must exist. PackageId counts as the detector only when Command, Service, and Path are absent.",
           "oneOf": [
-            { "required": ["Command"] },
-            { "required": ["Service"] },
-            { "required": ["Path"] },
-            { "required": ["WingetPackage"] }
+            {
+              "required": [
+                "Command"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "Service"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Path"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "Service"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "Command"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Path"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "Path"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "Command"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Service"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "PackageId"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "Command"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Service"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "Path"
+                    ]
+                  }
+                ]
+              }
+            }
           ]
         },
         {
-          "if": { "required": ["MustBeRunning"] },
-          "then": { "required": ["Service"] }
-        },
-        {
-          "if": { "required": ["VersionPattern"] },
+          "$comment": "MustBeRunning has meaning only for Windows service detection.",
+          "if": {
+            "required": [
+              "MustBeRunning"
+            ]
+          },
           "then": {
-            "required": ["Version"],
-            "not": { "required": ["WingetPackage"] }
+            "required": [
+              "Service"
+            ]
           }
         },
         {
-          "if": { "required": ["VersionArguments"] },
-          "then": { "not": { "required": ["WingetPackage"] } }
+          "$comment": "A custom extraction pattern is meaningful only when envcheck also has a version requirement to validate.",
+          "if": {
+            "required": [
+              "VersionPattern"
+            ]
+          },
+          "then": {
+            "required": [
+              "Version"
+            ]
+          }
+        },
+        {
+          "$comment": "VersionArguments and VersionPattern require an executable-backed detector. Plain Version is intentionally allowed for package-only requirements because Winget can report installed package versions.",
+          "if": {
+            "anyOf": [
+              {
+                "required": [
+                  "VersionArguments"
+                ]
+              },
+              {
+                "required": [
+                  "VersionPattern"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "anyOf": [
+              {
+                "required": [
+                  "Command"
+                ]
+              },
+              {
+                "required": [
+                  "Service"
+                ]
+              },
+              {
+                "required": [
+                  "Path"
+                ]
+              }
+            ]
+          }
         }
       ]
     },
     "environmentRequirement": {
       "type": "object",
+      "description": "A process environment variable whose value envcheck requires to be present and nonempty.",
       "additionalProperties": false,
-      "required": ["Name"],
+      "required": [
+        "Name"
+      ],
       "properties": {
-        "Name": { "type": "string", "minLength": 1 },
-        "Required": { "type": "boolean", "default": true },
-        "Secret": { "type": "boolean", "default": false }
+        "Name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Environment-variable name to read from the current PowerShell process environment."
+        },
+        "Required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether a missing, empty, or whitespace-only value produces FAIL instead of WARN. Defaults to true."
+        },
+        "Secret": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether envcheck must redact the variable's value in output. Defaults to false."
+        }
       }
     },
     "fileRequirement": {
       "type": "object",
+      "description": "A file that envcheck requires to exist as a nonempty file.",
       "additionalProperties": false,
-      "required": ["Name", "Path"],
+      "required": [
+        "Name",
+        "Path"
+      ],
       "properties": {
-        "Name": { "type": "string", "minLength": 1 },
-        "Path": { "type": "string", "minLength": 1 },
-        "Required": { "type": "boolean", "default": true }
+        "Name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable file requirement name shown in envcheck output."
+        },
+        "Path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Path to the required file. Relative-path behavior follows the current envcheck implementation's working-directory semantics."
+        },
+        "Required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether a missing path, non-file path, or zero-byte file produces FAIL instead of WARN. Defaults to true."
+        }
       }
     },
     "connectivityRequirement": {
       "type": "object",
+      "description": "A TCP endpoint that envcheck requires to accept a connection within the configured timeout.",
+      "$comment": "Connectivity currently proves TCP reachability only. It does not prove authentication, protocol health, or application readiness.",
       "additionalProperties": false,
-      "required": ["Name", "Host", "Port"],
+      "required": [
+        "Name",
+        "Host",
+        "Port"
+      ],
       "properties": {
-        "Name": { "type": "string", "minLength": 1 },
-        "Host": { "type": "string", "minLength": 1 },
-        "Port": { "type": "integer", "minimum": 1, "maximum": 65535 },
-        "TimeoutMs": { "type": "integer", "minimum": 1, "default": 3000 },
-        "Required": { "type": "boolean", "default": true }
+        "Name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable endpoint name shown in envcheck output."
+        },
+        "Host": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hostname or IP address to test.",
+          "examples": [
+            "localhost",
+            "127.0.0.1",
+            "db.example.test"
+          ]
+        },
+        "Port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "TCP port to test, from 1 through 65535.",
+          "examples": [
+            3306,
+            5432,
+            6379
+          ]
+        },
+        "TimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 3000,
+          "description": "Maximum number of milliseconds envcheck waits for the TCP connection. Defaults to 3000 ms."
+        },
+        "Required": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether an unreachable endpoint produces FAIL instead of WARN. Defaults to true."
+        }
       }
     }
   }

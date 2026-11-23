@@ -10,9 +10,7 @@ It is not an incident log and intentionally avoids organization-specific details
 
 The earliest prototype primarily asked whether expected software was present.
 
-That quickly proved insufficient.
-
-A developer can encounter states such as:
+That quickly proved insufficient. A developer can encounter states such as:
 
 ```text
 package manager says installed
@@ -57,24 +55,28 @@ Examples included:
 
 - server software represented by a Windows service,
 - bundled runtimes not intentionally placed on `PATH`,
-- prerequisites that are best represented by package registration.
+- desktop applications and prerequisites that are best represented by package registration.
 
 ### Decision
 
-Model the way software is found explicitly.
-
-Current strategies:
+Model executable-backed detection explicitly through:
 
 ```text
 Command
 Service
 Path
-WingetPackage
 ```
 
-Exactly one strategy is allowed per requirement.
+and use `PackageId` for package-based detection or remediation.
 
-### Why mutual exclusivity?
+`Command`, `Service`, and `Path` are mutually exclusive primary detectors.
+
+`PackageId` intentionally behaves differently:
+
+- By itself, it provides package-based detection and remediation.
+- With `Command`, `Service`, or `Path`, the executable-backed property remains the detector and `PackageId` supplies remediation identity.
+
+### Why this distinction?
 
 A requirement containing both:
 
@@ -85,9 +87,20 @@ A requirement containing both:
 }
 ```
 
-is ambiguous. envcheck should not silently choose one interpretation.
+is ambiguous because it specifies two primary detectors.
 
-Explicit configuration errors are preferable to implicit precedence rules.
+By contrast:
+
+```json
+{
+  "Command": "git",
+  "PackageId": "Git.Git"
+}
+```
+
+is not ambiguous. `git` determines whether the capability works; `Git.Git` identifies how envcheck may provision it if genuinely missing.
+
+Explicit configuration errors are preferable to implicit precedence among primary detectors.
 
 ## 3. Service-backed software
 
@@ -106,7 +119,9 @@ service is running when required
 
 Resolve service executables from `BinaryPathName`, with CIM fallback where necessary.
 
-Do not equate an invite-like service registration with actual runtime readiness. Validate the executable and service state separately.
+Validate the executable and service state separately. A registered service is not by itself proof that the underlying software is usable.
+
+Service-backed requirements belong in the top-level `Software` collection rather than a separate `Services` collection.
 
 ## 4. Explicit paths
 
@@ -116,7 +131,7 @@ Some toolchains bundle runtimes internally. Those runtimes can be valid project 
 
 Add `Path` as a first-class detection strategy rather than forcing users to modify global `PATH` merely so envcheck can find software.
 
-This also keeps the distinction between:
+This preserves the distinction between:
 
 ```text
 runtime exists at expected location
@@ -166,9 +181,7 @@ A wildcard means remaining trailing components are unconstrained.
 
 Requiring every software entry to contain a regex made configuration noisy and exposed implementation details.
 
-Most tools emit conventional dotted versions and should need no special configuration.
-
-However, some tools expose the relevant value through unusual status output.
+Most tools emit conventional dotted versions and should need no special configuration. Some tools, however, expose the relevant value through unusual status output.
 
 ### Decision
 
@@ -179,9 +192,13 @@ VersionArguments
 VersionPattern
 ```
 
+`VersionArguments` defaults to `--version` for executable-backed detection.
+
 `VersionPattern` must expose a named capture called `version`.
 
-This keeps normal configuration simple while retaining an escape hatch for unusual tools.
+This keeps ordinary configuration simple while retaining an escape hatch for unusual tools.
+
+A plain `Version` is also valid for package-only requirements because Winget can report an installed package version. `VersionArguments` and `VersionPattern` require executable-backed detection.
 
 ## 7. Native output normalization belongs in the engine
 
@@ -245,7 +262,7 @@ BrokenInstallation
 
 ### Safety consequence
 
-`Missing` may be eligible for automatic bootstrap.
+`Missing` may be eligible for bootstrap.
 
 `BrokenInstallation` is diagnostic only.
 
@@ -261,7 +278,7 @@ This breaks for constraints such as:
 18.x
 ```
 
-and also conflates two separate concerns.
+and conflates validation with provisioning.
 
 ### Decision
 
@@ -271,8 +288,8 @@ Keep these concepts separate:
 Version
     what installed software must satisfy
 
-WingetId
-    what package family is used to provision the software
+PackageId
+    what package family is used for package detection or provisioning
 ```
 
 For example:
@@ -282,13 +299,31 @@ For example:
   "Name": "Node.js",
   "Command": "node",
   "Version": "18.x",
-  "WingetId": "OpenJS.NodeJS.18"
+  "PackageId": "OpenJS.NodeJS.18"
 }
 ```
 
-The package family chooses Node 18. envcheck validates the resulting installed version independently.
+The package family selects Node 18. envcheck independently validates that the resulting installed version satisfies `18.x`.
 
-## 10. Generic remediation first, package exceptions second
+## 10. Winget-specific identity names were unnecessary
+
+An intermediate configuration model used separate Winget-specific properties for package detection and remediation.
+
+That created two identifiers even though both values represented the same underlying package identity, and it leaked the current package-manager implementation into the public schema.
+
+### Decision
+
+Collapse the public configuration to one flat property:
+
+```text
+PackageId
+```
+
+For PowerShell V0.x, `PackageId` is interpreted through Winget.
+
+A nested or per-platform package model may make sense later when a cross-platform implementation genuinely supports multiple package managers. That complexity does not belong in the Windows-only prototype.
+
+## 11. Generic remediation first, package exceptions second
 
 It is tempting to encode full installation command lines in configuration.
 
@@ -296,13 +331,46 @@ That would make envcheck configuration procedural rather than declarative.
 
 ### Decision
 
-Generate a sensible generic Winget installation command from package identity.
+Generate a sensible generic Winget installation command from `PackageId`.
 
-Only add optional installation overrides when a real package demonstrably needs them.
+Only add installation overrides when a real package demonstrably requires them.
 
 The project should resist becoming a collection of handwritten installation scripts.
 
-## 11. File existence was not enough
+## 12. Consent and package agreements are different decisions
+
+Bootstrap initially treated package installation consent and automatic agreement acceptance too similarly.
+
+A user saying yes to one interactive installation does not imply blanket authorization for envcheck to accept all package or source agreements on the user's behalf.
+
+### Decision
+
+Keep two clear operating modes.
+
+Interactive bootstrap:
+
+```powershell
+.\envcheck.ps1 -Bootstrap
+```
+
+- envcheck asks before each eligible package installation,
+- Winget remains interactive,
+- required source and package agreements are presented to the user,
+- envcheck does not automatically accept those agreements.
+
+Fully approved bootstrap:
+
+```powershell
+.\envcheck.ps1 -Bootstrap -Yes
+```
+
+- all eligible installations are approved,
+- required Winget source and package agreements may be accepted automatically,
+- installation may run unattended/silent.
+
+A separate noninteractive mode was removed because it did not provide a sufficiently distinct or intuitive contract.
+
+## 13. File existence was not enough
 
 A zero-byte configuration file usually does not satisfy a development requirement even though the filesystem path exists.
 
@@ -318,7 +386,7 @@ length > 0
 
 An `AllowEmpty` option can be added later if a concrete requirement emerges.
 
-## 12. Environment variables need values
+## 14. Environment variables need values
 
 A variable name can technically exist while containing no useful value.
 
@@ -328,7 +396,7 @@ Treat null, empty, and whitespace-only values as unsatisfied.
 
 Secrets are checked but never displayed.
 
-## 13. External JSON became the preferred interface
+## 15. External JSON became the preferred interface
 
 The prototype originally relied heavily on an embedded PowerShell hashtable.
 
@@ -350,7 +418,7 @@ Examples and public documentation should use JSON.
 
 Embedded configuration remains a fallback and development convenience.
 
-## 14. JSON Schema became part of the product
+## 16. JSON Schema became part of the product
 
 Once JSON became the preferred configuration format, typos and discoverability became important.
 
@@ -370,7 +438,16 @@ produce editor errors rather than silently being ignored.
 
 The schema is documentation, editor tooling, and an executable configuration contract.
 
-## 15. Product-scoped schema hosting
+The schema uses:
+
+- `description` for portable user-facing help,
+- `examples` for representative values,
+- `markdownDescription` selectively for richer editor help,
+- `$comment` for maintainer-facing design notes.
+
+Schema changes should remain synchronized with the script, example configuration, README, and architecture documentation.
+
+## 17. Product-scoped schema hosting
 
 If schemas are hosted publicly, paths should be organized around products rather than artifact types.
 
@@ -392,9 +469,9 @@ rather than:
 
 Product-scoped namespaces leave room for documentation, releases, and related artifacts without turning a global `/schema` directory into a miscellaneous registry.
 
-Committed configurations should prefer versioned schema URLs.
+Committed configurations should prefer versioned schema URLs once those schemas are actually published.
 
-## 16. PATH precedence is a distinct future concern
+## 18. PATH precedence is a distinct future concern
 
 An expected executable can exist at the correct path while another installation is selected by normal shell resolution.
 
@@ -406,7 +483,7 @@ Do not pretend a `Path` check proves normal command resolution.
 
 Add a future PATH-precedence capability instead of overloading the meaning of `Path`.
 
-## 17. Runtime version is not complete project readiness
+## 19. Runtime version is not complete project readiness
 
 A runtime can have the correct version while missing required modules or extensions.
 
@@ -418,7 +495,7 @@ Treat runtime-module checking as a future capability.
 
 Avoid adding one-off PHP-specific code until the general shape is understood.
 
-## 18. Workstation requirements and project requirements differ
+## 20. Workstation requirements and project requirements differ
 
 A workstation should provide runtimes and tooling.
 
@@ -430,7 +507,7 @@ Do not model frameworks such as Laravel as globally installed workstation softwa
 
 Potential future project checks should be a separate layer.
 
-## 19. WSL exposed platform capabilities
+## 21. WSL exposed platform capabilities
 
 `wsl.exe` existing does not prove that the machine has a useful WSL 2 environment.
 
@@ -447,7 +524,7 @@ virtualization
 Docker backend
 ```
 
-## 20. The PowerShell prototype is intentional
+## 22. The PowerShell prototype is intentional
 
 PowerShell is not viewed as the permanent architecture simply because it is the current implementation.
 
@@ -462,11 +539,11 @@ Move to Go when stable concepts justify:
 - provider interfaces,
 - distribution as a single binary,
 - structured output,
-- and broader portability.
+- broader portability.
 
 Do not rewrite merely because PowerShell syntax becomes inconvenient.
 
-## 21. Features should earn their complexity
+## 23. Features should earn their complexity
 
 Several possible features have been deliberately deferred:
 
@@ -493,14 +570,16 @@ The following decisions should be considered foundational unless new evidence di
 1. JSON is the preferred public configuration interface.
 2. Configuration describes intent rather than implementation plumbing.
 3. Detection, validation, and remediation remain separate.
-4. Software detection strategies are explicit and mutually exclusive.
-5. Generic version parsing is the default.
-6. `VersionPattern` is an escape hatch.
-7. Exact and simple trailing-wildcard version requirements are enough for the current stage.
-8. Package registration is not proof of health.
-9. Broken installations are not ordinary missing installations.
-10. Automatic remediation remains conservative.
-11. Schema validation should be strict.
-12. Workstation requirements and project dependencies are separate concepts.
-13. The PowerShell prototype discovers the model before the Go implementation freezes it.
-14. New complexity must be justified by a real requirement.
+4. `Command`, `Service`, and `Path` are mutually exclusive primary detectors.
+5. `PackageId` alone provides package detection and remediation; with a primary detector it provides remediation metadata.
+6. Generic version parsing is the default.
+7. `VersionPattern` is an escape hatch.
+8. Exact and simple trailing-wildcard version requirements are enough for the current stage.
+9. Package registration is not proof of health.
+10. Broken installations are not ordinary missing installations.
+11. Automatic remediation remains conservative.
+12. Interactive bootstrap does not auto-accept package agreements; `-Yes` explicitly authorizes agreement acceptance.
+13. Schema validation should be strict and useful as editor documentation.
+14. Workstation requirements and project dependencies are separate concepts.
+15. The PowerShell prototype discovers the model before the Go implementation freezes it.
+16. New complexity must be justified by a real requirement.
